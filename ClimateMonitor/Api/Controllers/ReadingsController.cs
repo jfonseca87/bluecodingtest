@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using ClimateMonitor.Services;
 using ClimateMonitor.Services.Models;
+using System.Text.RegularExpressions;
 
 namespace ClimateMonitor.Api.Controllers;
 
@@ -10,13 +11,15 @@ public class ReadingsController : ControllerBase
 {
     private readonly DeviceSecretValidatorService _secretValidator;
     private readonly AlertService _alertService;
+    private readonly string _firwareRegexPattern;
 
     public ReadingsController(
-        DeviceSecretValidatorService secretValidator, 
+        DeviceSecretValidatorService secretValidator,
         AlertService alertService)
     {
         _secretValidator = secretValidator;
         _alertService = alertService;
+        _firwareRegexPattern = "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$";
     }
 
     /// <summary>
@@ -34,9 +37,18 @@ public class ReadingsController : ControllerBase
     /// <param name="deviceReadingRequest">Sensor information and extra metadata from device.</param>
     [HttpPost("evaluate")]
     public ActionResult<IEnumerable<Alert>> EvaluateReading(
-        string deviceSecret,
         [FromBody] DeviceReadingRequest deviceReadingRequest)
     {
+        string deviceSecret = HttpContext.Request.Headers["x-device-shared-secret"];
+        bool isValidFirmware = Regex.IsMatch(deviceReadingRequest.FirmwareVersion, _firwareRegexPattern);
+
+        if (!isValidFirmware)
+        {
+            var validationProblemDetails = new ValidationProblemDetails();
+            validationProblemDetails.Errors.Add("FirmwareVersion", new string[] { "The firmware value does not match semantic versioning format." });
+            return BadRequest(validationProblemDetails);
+        }
+
         if (!_secretValidator.ValidateDeviceSecret(deviceSecret))
         {
             return Problem(
